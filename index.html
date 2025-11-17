@@ -59,6 +59,7 @@
     .button-row {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     button {
@@ -70,6 +71,7 @@
       cursor: pointer;
       transition: background 0.2s, transform 0.1s;
       flex: 1;
+      min-width: 0;
     }
 
     #captureBtn {
@@ -98,8 +100,20 @@
       color: #000;
     }
 
-    #flashBtn:active {
+    #flashBtn:active,
+    #photoBtn:active {
       transform: scale(0.97);
+    }
+
+    #photoBtn {
+      background: #4caf50;
+      color: #fff;
+    }
+
+    #photoBtn:disabled {
+      background: #555;
+      cursor: default;
+      transform: none;
     }
 
     #status {
@@ -156,7 +170,7 @@
 <body>
   <div class="container">
     <h2>QR Capture & Crop</h2>
-    <p>Point your camera at a QR code, then tap <b>Capture</b>.</p>
+    <p>Choose: live camera or take a photo, then process the QR.</p>
 
     <!-- Live camera (tap to refocus) -->
     <video id="video" autoplay playsinline></video>
@@ -164,15 +178,27 @@
     <!-- Controls -->
     <div id="controls">
       <div class="button-row">
-        <button id="captureBtn" disabled>Capture</button>
+        <button id="captureBtn" disabled>Capture (Live)</button>
         <button id="flashBtn" disabled>Flash</button>
+      </div>
+      <div class="button-row">
+        <button id="photoBtn">Use Photo / Take Photo</button>
       </div>
       <span id="status">Loading OpenCV…</span>
       <div id="tapHint">Tip: tap the video to refocus (if supported).</div>
     </div>
 
-    <!-- Hidden canvas to grab video frame -->
+    <!-- Hidden canvas to grab video/photo frame -->
     <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+    <!-- Hidden file input for native photo picker / camera -->
+    <input
+      type="file"
+      id="photoInput"
+      accept="image/*"
+      capture="environment"
+      style="display:none;"
+    />
 
     <!-- Output canvases -->
     <div id="output">
@@ -197,6 +223,8 @@
     let qrCenterCanvas = document.getElementById('qrCenter');
     let captureBtn = document.getElementById('captureBtn');
     let flashBtn = document.getElementById('flashBtn');
+    let photoBtn = document.getElementById('photoBtn');
+    let photoInput = document.getElementById('photoInput');
     let statusSpan = document.getElementById('status');
 
     let qrDetector = null;
@@ -208,11 +236,13 @@
     let torchOn = false;
     let focusSupported = false;
 
-    // Ask for high-res back camera
+    // Ask for high-res back camera (for live mode)
     function startCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("Camera not supported here. Use Chrome on Android and http://<ip>:8000 or HTTPS.");
-        statusSpan.textContent = "Camera not supported";
+        console.warn("Camera not supported. Live mode disabled, photo mode still works.");
+        statusSpan.textContent = "Camera not supported (use Photo mode).";
+        captureBtn.disabled = true;
+        flashBtn.disabled = true;
         return;
       }
 
@@ -229,7 +259,6 @@
         .then(stream => {
           videoTrack = stream.getVideoTracks()[0];
 
-          // Read capabilities to see if torch / focus are supported
           const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
           console.log('Video capabilities:', caps);
 
@@ -238,6 +267,7 @@
             flashBtn.disabled = false;
             flashBtn.textContent = "Flash Off";
           } else {
+            torchAvailable = false;
             flashBtn.disabled = true;
             flashBtn.textContent = "Flash N/A";
           }
@@ -256,14 +286,16 @@
         .catch(err => {
           console.error("Error accessing camera: ", err);
           alert("Could not access camera: " + err.message);
-          statusSpan.textContent = "Camera error";
+          statusSpan.textContent = "Camera error. You can still use Photo mode.";
+          captureBtn.disabled = true;
+          flashBtn.disabled = true;
         });
     }
 
     function onOpenCvReady() {
       console.log('OpenCV.js loaded');
       opencvReady = true;
-      statusSpan.textContent = "OpenCV ready, starting camera…";
+      statusSpan.textContent = "OpenCV ready. Starting live camera…";
       startCamera();
 
       video.addEventListener('playing', () => {
@@ -284,22 +316,22 @@
           qrDetector = new cv.QRCodeDetector();
 
           captureBtn.disabled = false;
-          statusSpan.textContent = `Camera ready (${video.videoWidth}×${video.videoHeight}). Aim at QR & tap Capture.`;
+          statusSpan.textContent = `Live mode ready (${video.videoWidth}×${video.videoHeight}). Or use Photo mode.`;
         };
 
         initLoop();
       });
 
-      captureBtn.addEventListener('click', captureAndProcess);
+      // Live capture & flash
+      captureBtn.addEventListener('click', captureFromVideo);
       flashBtn.addEventListener('click', toggleFlash);
 
-      // Tap to refocus (best-effort: triggers autofocus, not region-based)
+      // Tap to refocus (best-effort)
       video.addEventListener('click', () => {
         if (!videoTrack || !videoTrack.applyConstraints || !focusSupported) {
           console.log("Focus not supported on this device/browser.");
           return;
         }
-        // This typically just re-triggers autofocus
         videoTrack.applyConstraints({
           advanced: [{ focusMode: 'continuous' }]
         }).then(() => {
@@ -308,6 +340,18 @@
           console.warn("Focus constraint error:", err);
         });
       });
+
+      // Photo mode: open native camera / gallery
+      photoBtn.addEventListener('click', () => {
+        if (!opencvReady) {
+          alert("OpenCV not ready yet.");
+          return;
+        }
+        photoInput.click(); // triggers native "Take Photo" / gallery dialog on mobile
+      });
+
+      // Handle chosen photo
+      photoInput.addEventListener('change', handlePhotoSelection);
     }
 
     // Torch toggle (Android Chrome on supported devices)
@@ -342,19 +386,11 @@
       return cleaned;
     }
 
-    function captureAndProcess() {
-      if (!opencvReady || !streaming || !qrDetector) {
-        alert("Not ready yet. Wait for camera & OpenCV.");
-        return;
+    // Common QR detection + crop + clean pipeline
+    function processMat(src) {
+      if (!qrDetector) {
+        qrDetector = new cv.QRCodeDetector();
       }
-
-      const w = hiddenCanvas.width;
-      const h = hiddenCanvas.height;
-      const ctx = hiddenCanvas.getContext('2d');
-
-      ctx.drawImage(video, 0, 0, w, h);
-
-      let src = cv.imread(hiddenCanvas);  // CV_8UC4
 
       let points = new cv.Mat();
       let straight = new cv.Mat();
@@ -415,14 +451,69 @@
           statusSpan.textContent = "QR detected but crop size invalid.";
         }
       } else {
-        console.log("No QR code detected in this frame.");
-        statusSpan.textContent = "No QR detected. Move closer / adjust angle.";
-        alert("No QR code detected in this capture. Try again.");
+        console.log("No QR code detected.");
+        statusSpan.textContent = "No QR detected. Try again / move closer.";
+        alert("No QR code detected. Try again with better framing / lighting.");
       }
 
-      src.delete();
       points.delete();
       straight.delete();
+    }
+
+    // Capture from live video
+    function captureFromVideo() {
+      if (!opencvReady || !streaming) {
+        alert("Live camera not ready yet.");
+        return;
+      }
+
+      const w = hiddenCanvas.width;
+      const h = hiddenCanvas.height;
+      const ctx = hiddenCanvas.getContext('2d');
+
+      ctx.drawImage(video, 0, 0, w, h);
+
+      let src = cv.imread(hiddenCanvas);  // CV_8UC4
+      processMat(src);
+      src.delete();
+    }
+
+    // Handle photo upload / native camera capture
+    function handlePhotoSelection(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      if (!opencvReady) {
+        alert("OpenCV not ready.");
+        return;
+      }
+
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+
+      img.onload = () => {
+        // Resize hidden canvas to image size
+        hiddenCanvas.width = img.width;
+        hiddenCanvas.height = img.height;
+
+        const ctx = hiddenCanvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        let src = cv.imread(hiddenCanvas);
+        processMat(src);
+        src.delete();
+
+        URL.revokeObjectURL(url);
+        // reset input so user can choose same file again if needed
+        photoInput.value = "";
+      };
+
+      img.onerror = () => {
+        alert("Failed to load image.");
+        URL.revokeObjectURL(url);
+      };
+
+      img.src = url;
     }
   </script>
 </body>
