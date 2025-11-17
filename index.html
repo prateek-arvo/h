@@ -2,18 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>QR Auto Crop with Camera (OpenCV.js)</title>
+  <title>QR Capture & Crop (OpenCV.js)</title>
   <style>
     body { font-family: sans-serif; }
     #video {
       width: 320px;
       height: 240px;
       background: #000;
+      display: block;
+      margin-bottom: 8px;
+    }
+    #controls {
+      margin-bottom: 16px;
     }
     #output {
       display: flex;
       gap: 16px;
-      margin-top: 16px;
       flex-wrap: wrap;
     }
     canvas {
@@ -23,13 +27,19 @@
   </style>
 </head>
 <body>
-  <h2>QR Auto Crop Demo</h2>
-  <p>When a QR code is visible, it will be cropped and shown below.</p>
+  <h2>QR Capture & Crop Demo</h2>
+  <p>Camera opens automatically. Point it at a QR code and press <b>Capture</b>.</p>
 
   <!-- Live camera -->
   <video id="video" autoplay playsinline></video>
 
-  <!-- Hidden canvas to grab video frames -->
+  <!-- Controls -->
+  <div id="controls">
+    <button id="captureBtn" disabled>Capture</button>
+    <span id="status">Loading OpenCV…</span>
+  </div>
+
+  <!-- Hidden canvas to grab video frame -->
   <canvas id="hiddenCanvas" style="display:none;"></canvas>
 
   <!-- Output canvases -->
@@ -52,15 +62,17 @@
     let hiddenCanvas = document.getElementById('hiddenCanvas');
     let qrFullCanvas = document.getElementById('qrFull');
     let qrCenterCanvas = document.getElementById('qrCenter');
+    let captureBtn = document.getElementById('captureBtn');
+    let statusSpan = document.getElementById('status');
 
     let qrDetector = null;
     let streaming = false;
-    let processing = false;
-    let detectionDone = false;
+    let opencvReady = false;
 
     function startCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         alert("Camera not supported here. Use Chrome and http://<ip>:8000 or HTTPS.");
+        statusSpan.textContent = "Camera not supported";
         return;
       }
 
@@ -73,18 +85,20 @@
       }).catch(err => {
         console.error("Error accessing camera: ", err);
         alert("Could not access camera: " + err.message);
+        statusSpan.textContent = "Camera error";
       });
     }
 
     function onOpenCvReady() {
       console.log('OpenCV.js loaded');
+      opencvReady = true;
+      statusSpan.textContent = "OpenCV ready, waiting for camera…";
       startCamera();
 
       video.addEventListener('playing', () => {
         if (streaming) return;
         streaming = true;
 
-        // Wait until we actually have dimensions
         const initLoop = () => {
           if (video.videoWidth === 0 || video.videoHeight === 0) {
             requestAnimationFrame(initLoop);
@@ -97,98 +111,95 @@
 
           qrDetector = new cv.QRCodeDetector();
 
-          // Start processing loop
-          requestAnimationFrame(processFrame);
+          // Enable capture button
+          captureBtn.disabled = false;
+          statusSpan.textContent = "Camera ready. Point at QR & press Capture.";
         };
 
         initLoop();
       });
+
+      // Attach click handler
+      captureBtn.addEventListener('click', captureAndProcess);
     }
 
-    function processFrame() {
-      if (!streaming || detectionDone) return;
-      if (processing) {
-        requestAnimationFrame(processFrame);
+    function captureAndProcess() {
+      if (!opencvReady || !streaming || !qrDetector) {
+        alert("Not ready yet. Make sure camera is running and OpenCV loaded.");
         return;
       }
-      processing = true;
 
-      try {
-        const w = hiddenCanvas.width;
-        const h = hiddenCanvas.height;
+      const w = hiddenCanvas.width;
+      const h = hiddenCanvas.height;
+      const ctx = hiddenCanvas.getContext('2d');
 
-        // Draw current video frame onto hidden canvas
-        const ctx = hiddenCanvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, w, h);
+      // Draw current video frame to hidden canvas
+      ctx.drawImage(video, 0, 0, w, h);
 
-        // Read that canvas into OpenCV Mat
-        let src = cv.imread(hiddenCanvas);  // CV_8UC4, correct size
+      // Convert that canvas to OpenCV Mat
+      let src = cv.imread(hiddenCanvas);  // CV_8UC4, correct size
 
-        let points = new cv.Mat();
-        let straight = new cv.Mat();
-        let decoded = qrDetector.detectAndDecode(src, points, straight);
+      let points = new cv.Mat();
+      let straight = new cv.Mat();
+      let decoded = qrDetector.detectAndDecode(src, points, straight);
 
-        if (decoded && decoded.length > 0 && !points.empty()) {
-          console.log('QR data:', decoded);
+      if (decoded && decoded.length > 0 && !points.empty()) {
+        console.log('QR data:', decoded);
+        statusSpan.textContent = "QR detected: " + decoded;
 
-          // points: 1x4x2 float matrix
-          let data = points.data32F;
-          let xs = [data[0], data[2], data[4], data[6]];
-          let ys = [data[1], data[3], data[5], data[7]];
+        // points: 1x4x2 float matrix
+        let data = points.data32F;
+        let xs = [data[0], data[2], data[4], data[6]];
+        let ys = [data[1], data[3], data[5], data[7]];
 
-          let xMin = Math.max(0, Math.floor(Math.min.apply(null, xs)));
-          let xMax = Math.min(src.cols, Math.ceil(Math.max.apply(null, xs)));
-          let yMin = Math.max(0, Math.floor(Math.min.apply(null, ys)));
-          let yMax = Math.min(src.rows, Math.ceil(Math.max.apply(null, ys)));
+        let xMin = Math.max(0, Math.floor(Math.min.apply(null, xs)));
+        let xMax = Math.min(src.cols, Math.ceil(Math.max.apply(null, xs)));
+        let yMin = Math.max(0, Math.floor(Math.min.apply(null, ys)));
+        let yMax = Math.min(src.rows, Math.ceil(Math.max.apply(null, ys)));
 
-          let width = xMax - xMin;
-          let height = yMax - yMin;
+        let width = xMax - xMin;
+        let height = yMax - yMin;
 
-          if (width > 0 && height > 0) {
-            // --- Full QR crop (no upscaling) ---
-            let rect = new cv.Rect(xMin, yMin, width, height);
-            let qrCrop = src.roi(rect);
-            cv.imshow('qrFull', qrCrop);
+        if (width > 0 && height > 0) {
+          // --- Full QR crop (no upscaling) ---
+          let rect = new cv.Rect(xMin, yMin, width, height);
+          let qrCrop = src.roi(rect);
+          cv.imshow('qrFull', qrCrop);
 
-            // --- Center 36% crop ---
-            let cw = Math.floor(width * 0.36);
-            let ch = Math.floor(height * 0.36);
-            let cx = Math.floor(width / 2);
-            let cy = Math.floor(height / 2);
+          // --- Center 36% crop ---
+          let cw = Math.floor(width * 0.36);
+          let ch = Math.floor(height * 0.36);
+          let cx = Math.floor(width / 2);
+          let cy = Math.floor(height / 2);
 
-            let cx1 = Math.max(0, cx - Math.floor(cw / 2));
-            let cy1 = Math.max(0, cy - Math.floor(ch / 2));
-            let cx2 = Math.min(width, cx1 + cw);
-            let cy2 = Math.min(height, cy1 + ch);
+          let cx1 = Math.max(0, cx - Math.floor(cw / 2));
+          let cy1 = Math.max(0, cy - Math.floor(ch / 2));
+          let cx2 = Math.min(width, cx1 + cw);
+          let cy2 = Math.min(height, cy1 + ch);
 
-            let cwidth = cx2 - cx1;
-            let cheight = cy2 - cy1;
+          let cwidth = cx2 - cx1;
+          let cheight = cy2 - cy1;
 
-            if (cwidth > 0 && cheight > 0) {
-              let centerRect = new cv.Rect(cx1, cy1, cwidth, cheight);
-              let centerCrop = qrCrop.roi(centerRect);
-              cv.imshow('qrCenter', centerCrop);
-              centerCrop.delete();
-            }
-
-            qrCrop.delete();
-
-            // stop after first good detection
-            detectionDone = true;
+          if (cwidth > 0 && cheight > 0) {
+            let centerRect = new cv.Rect(cx1, cy1, cwidth, cheight);
+            let centerCrop = qrCrop.roi(centerRect);
+            cv.imshow('qrCenter', centerCrop);
+            centerCrop.delete();
           }
+
+          qrCrop.delete();
+        } else {
+          statusSpan.textContent = "QR detected but crop size invalid.";
         }
-
-        src.delete();
-        points.delete();
-        straight.delete();
-      } catch (err) {
-        console.error(err);
+      } else {
+        console.log("No QR code detected in this frame.");
+        statusSpan.textContent = "No QR detected. Try again.";
+        alert("No QR code detected in this capture. Try moving closer / better lighting.");
       }
 
-      processing = false;
-      if (!detectionDone) {
-        requestAnimationFrame(processFrame);
-      }
+      src.delete();
+      points.delete();
+      straight.delete();
     }
   </script>
 </body>
