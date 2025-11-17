@@ -114,7 +114,6 @@
       display: block;
     }
 
-    /* Slightly nicer on larger screens */
     @media (min-width: 700px) {
       #output {
         flex-direction: row;
@@ -145,11 +144,11 @@
     <!-- Output canvases -->
     <div id="output">
       <div class="panel">
-        <div class="panel-title">Full QR Crop</div>
+        <div class="panel-title">Full QR Crop (cleaned)</div>
         <canvas id="qrFull"></canvas>
       </div>
       <div class="panel">
-        <div class="panel-title">Center 36% Crop</div>
+        <div class="panel-title">Center 36% Crop (cleaned)</div>
         <canvas id="qrCenter"></canvas>
       </div>
     </div>
@@ -206,7 +205,6 @@
             return;
           }
 
-          // Match hidden canvas to video size
           hiddenCanvas.width = video.videoWidth;
           hiddenCanvas.height = video.videoHeight;
 
@@ -220,6 +218,22 @@
       });
 
       captureBtn.addEventListener('click', captureAndProcess);
+    }
+
+    // --- Cleaning function: light blur + contrast normalize, NO upscaling ---
+    function cleanMat(mat) {
+      // mat: CV_8UC4 (from RGBA) or similar
+      let tmp = new cv.Mat();
+      let cleaned = new cv.Mat();
+
+      // Light smoothing
+      cv.GaussianBlur(mat, tmp, new cv.Size(3, 3), 0.4, 0.4, cv.BORDER_DEFAULT);
+
+      // Contrast normalization [0,255]
+      cv.normalize(tmp, cleaned, 0, 255, cv.NORM_MINMAX);
+
+      tmp.delete();
+      return cleaned;
     }
 
     function captureAndProcess() {
@@ -246,7 +260,6 @@
         console.log('QR data:', decoded);
         statusSpan.textContent = "QR detected: " + decoded;
 
-        // points: 1x4x2 float matrix
         let data = points.data32F;
         let xs = [data[0], data[2], data[4], data[6]];
         let ys = [data[1], data[3], data[5], data[7]];
@@ -263,7 +276,10 @@
           // --- Full QR crop (no upscaling) ---
           let rect = new cv.Rect(xMin, yMin, width, height);
           let qrCrop = src.roi(rect);
-          cv.imshow('qrFull', qrCrop);
+
+          // Clean full crop
+          let qrClean = cleanMat(qrCrop);
+          cv.imshow('qrFull', qrClean);
 
           // --- Center 36% crop ---
           let cw = Math.floor(width * 0.36);
@@ -282,10 +298,16 @@
           if (cwidth > 0 && cheight > 0) {
             let centerRect = new cv.Rect(cx1, cy1, cwidth, cheight);
             let centerCrop = qrCrop.roi(centerRect);
-            cv.imshow('qrCenter', centerCrop);
+
+            // Clean center crop
+            let centerClean = cleanMat(centerCrop);
+            cv.imshow('qrCenter', centerClean);
+
+            centerClean.delete();
             centerCrop.delete();
           }
 
+          qrClean.delete();
           qrCrop.delete();
         } else {
           statusSpan.textContent = "QR detected but crop size invalid.";
