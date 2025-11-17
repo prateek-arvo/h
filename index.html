@@ -159,10 +159,7 @@
 
     @media (min-width: 700px) {
       #output {
-        flex-direction: row;
-      }
-      .panel {
-        flex: 1;
+        flex-direction: column;
       }
     }
   </style>
@@ -203,12 +200,16 @@
     <!-- Output canvases -->
     <div id="output">
       <div class="panel">
-        <div class="panel-title">Full QR Crop (cleaned)</div>
+        <div class="panel-title">Full QR Crop (Siamese-clean)</div>
         <canvas id="qrFull"></canvas>
       </div>
       <div class="panel">
-        <div class="panel-title">Center 36% Crop (cleaned)</div>
+        <div class="panel-title">Center 36% Crop (Siamese-clean)</div>
         <canvas id="qrCenter"></canvas>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Straight QR (Siamese-clean)</div>
+        <canvas id="qrStraight"></canvas>
       </div>
     </div>
   </div>
@@ -221,6 +222,7 @@
     let hiddenCanvas = document.getElementById('hiddenCanvas');
     let qrFullCanvas = document.getElementById('qrFull');
     let qrCenterCanvas = document.getElementById('qrCenter');
+    let qrStraightCanvas = document.getElementById('qrStraight');
     let captureBtn = document.getElementById('captureBtn');
     let flashBtn = document.getElementById('flashBtn');
     let photoBtn = document.getElementById('photoBtn');
@@ -236,7 +238,7 @@
     let torchOn = false;
     let focusSupported = false;
 
-    // Ask for high-res back camera (for live mode)
+    // High-res back camera for live mode
     function startCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.warn("Camera not supported. Live mode disabled, photo mode still works.");
@@ -347,10 +349,9 @@
           alert("OpenCV not ready yet.");
           return;
         }
-        photoInput.click(); // triggers native "Take Photo" / gallery dialog on mobile
+        photoInput.click();
       });
 
-      // Handle chosen photo
       photoInput.addEventListener('change', handlePhotoSelection);
     }
 
@@ -374,26 +375,29 @@
       });
     }
 
-    // Cleaning: light blur + contrast normalize, NO upscaling
-    function cleanMat(mat) {
-      let tmp = new cv.Mat();
+    // === Siamese-style cleaning: very light blur + normalize, NO resize ===
+    function siameseClean(mat) {
+      let blurred = new cv.Mat();
       let cleaned = new cv.Mat();
 
-      cv.GaussianBlur(mat, tmp, new cv.Size(3, 3), 0.4, 0.4, cv.BORDER_DEFAULT);
-      cv.normalize(tmp, cleaned, 0, 255, cv.NORM_MINMAX);
+      // Very light blur (3x3, sigma=0.3)
+      cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_DEFAULT);
 
-      tmp.delete();
+      // Slight contrast normalization [0,255]
+      cv.normalize(blurred, cleaned, 0, 255, cv.NORM_MINMAX);
+
+      blurred.delete();
       return cleaned;
     }
 
-    // Common QR detection + crop + clean pipeline
+    // Common QR detection + crop + clean pipeline (matches your Python logic)
     function processMat(src) {
       if (!qrDetector) {
         qrDetector = new cv.QRCodeDetector();
       }
 
       let points = new cv.Mat();
-      let straight = new cv.Mat();
+      let straight = new cv.Mat();  // straight_qrcode equivalent
       let decoded = qrDetector.detectAndDecode(src, points, straight);
 
       if (decoded && decoded.length > 0 && !points.empty()) {
@@ -404,41 +408,58 @@
         let xs = [data[0], data[2], data[4], data[6]];
         let ys = [data[1], data[3], data[5], data[7]];
 
-        let xMin = Math.max(0, Math.floor(Math.min.apply(null, xs)));
-        let xMax = Math.min(src.cols, Math.ceil(Math.max.apply(null, xs)));
-        let yMin = Math.max(0, Math.floor(Math.min.apply(null, ys)));
-        let yMax = Math.min(src.rows, Math.ceil(Math.max.apply(null, ys)));
+        let xMin = Math.floor(Math.min.apply(null, xs));
+        let xMax = Math.ceil(Math.max.apply(null, xs));
+        let yMin = Math.floor(Math.min.apply(null, ys));
+        let yMax = Math.ceil(Math.max.apply(null, ys));
+
+        // ----- padding = 4 pixels (like your Python) -----
+        const pad = 4;
+        xMin = Math.max(0, xMin - pad);
+        yMin = Math.max(0, yMin - pad);
+        xMax = Math.min(src.cols, xMax + pad);
+        yMax = Math.min(src.rows, yMax + pad);
 
         let width = xMax - xMin;
         let height = yMax - yMin;
 
         if (width > 0 && height > 0) {
-          // Full QR crop (no upscaling)
+          // ---------- (A) RAW QR CROP (padded bounding box) ----------
           let rect = new cv.Rect(xMin, yMin, width, height);
           let qrCrop = src.roi(rect);
 
-          let qrClean = cleanMat(qrCrop);
+          // ---------- (B) SIAMESE-FRIENDLY CLEAN FULL CROP ----------
+          let qrClean = siameseClean(qrCrop);
           cv.imshow('qrFull', qrClean);
 
-          // Center 36% crop
-          let cw = Math.floor(width * 0.36);
-          let ch = Math.floor(height * 0.36);
-          let cx = Math.floor(width / 2);
-          let cy = Math.floor(height / 2);
+          // ---------- (C) CENTER 36% CROP ----------
+          let h = qrCrop.rows;
+          let w = qrCrop.cols;
+          let cropW = Math.floor(w * 0.36);
+          let cropH = Math.floor(h * 0.36);
 
-          let cx1 = Math.max(0, cx - Math.floor(cw / 2));
-          let cy1 = Math.max(0, cy - Math.floor(ch / 2));
-          let cx2 = Math.min(width, cx1 + cw);
-          let cy2 = Math.min(height, cy1 + ch);
+          let cx = Math.floor(w / 2);
+          let cy = Math.floor(h / 2);
 
-          let cwidth = cx2 - cx1;
-          let cheight = cy2 - cy1;
+          let x1 = cx - Math.floor(cropW / 2);
+          let y1 = cy - Math.floor(cropH / 2);
+          let x2 = x1 + cropW;
+          let y2 = y1 + cropH;
 
-          if (cwidth > 0 && cheight > 0) {
-            let centerRect = new cv.Rect(cx1, cy1, cwidth, cheight);
+          x1 = Math.max(0, x1);
+          y1 = Math.max(0, y1);
+          x2 = Math.min(w, x2);
+          y2 = Math.min(h, y2);
+
+          let centerW = x2 - x1;
+          let centerH = y2 - y1;
+
+          if (centerW > 0 && centerH > 0) {
+            let centerRect = new cv.Rect(x1, y1, centerW, centerH);
             let centerCrop = qrCrop.roi(centerRect);
 
-            let centerClean = cleanMat(centerCrop);
+            // ---------- (D) LIGHT CLEAN CENTER CROP ----------
+            let centerClean = siameseClean(centerCrop);
             cv.imshow('qrCenter', centerClean);
 
             centerClean.delete();
@@ -449,6 +470,29 @@
           qrCrop.delete();
         } else {
           statusSpan.textContent = "QR detected but crop size invalid.";
+        }
+
+        // ---------- (E) OPTIONAL: STRAIGHT GEOMETRY ----------
+        if (!straight.empty()) {
+          let straightMat = straight.clone();
+
+          // If straight is single-channel, convert to 3-channel
+          if (straightMat.channels() === 1) {
+            let rgb = new cv.Mat();
+            cv.cvtColor(straightMat, rgb, cv.COLOR_GRAY2BGR);
+            straightMat.delete();
+            straightMat = rgb;
+          }
+
+          let straightClean = siameseClean(straightMat);
+          cv.imshow('qrStraight', straightClean);
+
+          straightClean.delete();
+          straightMat.delete();
+        } else {
+          // Clear straight canvas if nothing
+          let ctx = qrStraightCanvas.getContext('2d');
+          ctx.clearRect(0, 0, qrStraightCanvas.width, qrStraightCanvas.height);
         }
       } else {
         console.log("No QR code detected.");
@@ -492,7 +536,6 @@
       const url = URL.createObjectURL(file);
 
       img.onload = () => {
-        // Resize hidden canvas to image size
         hiddenCanvas.width = img.width;
         hiddenCanvas.height = img.height;
 
@@ -504,7 +547,6 @@
         src.delete();
 
         URL.revokeObjectURL(url);
-        // reset input so user can choose same file again if needed
         photoInput.value = "";
       };
 
