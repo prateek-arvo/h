@@ -375,16 +375,60 @@
     }
 
     // === Siamese-style cleaning ===
-    function siameseClean(mat) {
-      let blurred = new cv.Mat();
-      let cleaned = new cv.Mat();
-
-      cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
-      cv.normalize(blurred, cleaned, 0, 255, cv.NORM_MINMAX);
-
-      blurred.delete();
-      return cleaned;
+   // Stronger, more stable cleaning: BGR -> gray -> blur -> float normalize -> 8U -> 3-channel
+function siameseClean(mat) {
+  // Ensure 8-bit 3-channel BGR
+  let bgr = new cv.Mat();
+  if (mat.type() !== cv.CV_8UC3) {
+    mat.convertTo(bgr, cv.CV_8U);
+    if (bgr.channels() === 4) {
+      let tmp = new cv.Mat();
+      cv.cvtColor(bgr, tmp, cv.COLOR_RGBA2BGR);
+      bgr.delete();
+      bgr = tmp;
+    } else if (bgr.channels() === 1) {
+      let tmp = new cv.Mat();
+      cv.cvtColor(bgr, tmp, cv.COLOR_GRAY2BGR);
+      bgr.delete();
+      bgr = tmp;
     }
+  } else {
+    bgr = mat.clone();
+  }
+
+  // BGR -> Gray
+  let gray = new cv.Mat();
+  cv.cvtColor(bgr, gray, cv.COLOR_BGR2GRAY);
+
+  // Very light blur (3x3, sigma=0.3, REFLECT_101)
+  let blurred = new cv.Mat();
+  cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
+
+  // Normalize in float then bring back to 8U
+  let blurred32 = new cv.Mat();
+  blurred.convertTo(blurred32, cv.CV_32F);
+
+  let norm32 = new cv.Mat();
+  cv.normalize(blurred32, norm32, 0, 255, cv.NORM_MINMAX);
+
+  let norm8 = new cv.Mat();
+  norm32.convertTo(norm8, cv.CV_8U);
+
+  // Back to 3-channel so cv.imshow + canvases behave consistently
+  let cleaned3 = new cv.Mat();
+  cv.cvtColor(norm8, cleaned3, cv.COLOR_GRAY2BGR);
+
+  // Clean up intermediates
+  bgr.delete();
+  gray.delete();
+  blurred.delete();
+  blurred32.delete();
+  norm32.delete();
+  norm8.delete();
+
+  return cleaned3;
+}
+
 
     // === Core QR processing ===
     function processMat(src) {
@@ -640,3 +684,4 @@
   <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </body>
 </html>
+
