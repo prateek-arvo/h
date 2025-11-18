@@ -49,7 +49,7 @@
     }
 
     #controls {
-      margin: 10px 0 14px 0;
+      margin: 10px 0 10px 0;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -166,6 +166,21 @@
       background: #000;
       display: block;
     }
+
+    #base64Output {
+      width: 100%;
+      min-height: 100px;
+      max-height: 240px;
+      resize: vertical;
+      font-size: 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      background: #050505;
+      color: #e0e0e0;
+      border-radius: 8px;
+      border: 1px solid #333;
+      padding: 6px;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 <body>
@@ -186,10 +201,17 @@
         <button id="photoBtn">Use Photo / Take Photo</button>
       </div>
       <div class="button-row">
-        <button id="base64Btn" disabled>Get Base64 (Full Clean Crop)</button>
+        <!-- Now clearly labeled as center 36% -->
+        <button id="base64Btn" disabled>Get Base64 (Center 36% Clean)</button>
       </div>
       <span id="status">Loading OpenCV…</span>
       <div id="tapHint">Tip: tap the video to refocus (if supported).</div>
+    </div>
+
+    <!-- Base64 output area -->
+    <div class="panel">
+      <div class="panel-title">Base64 (Center 36% Cleaned Crop)</div>
+      <textarea id="base64Output" placeholder="Click the button above after a QR is processed to see Base64 here."></textarea>
     </div>
 
     <!-- Hidden canvas -->
@@ -221,7 +243,7 @@
     </div>
   </div>
 
-  <!-- Your main JS -->
+  <!-- Main JS -->
   <script>
     let video = document.getElementById('video');
     let hiddenCanvas = document.getElementById('hiddenCanvas');
@@ -236,6 +258,7 @@
     let base64Btn = document.getElementById('base64Btn');
     let photoInput = document.getElementById('photoInput');
     let statusSpan = document.getElementById('status');
+    let base64Output = document.getElementById('base64Output');
 
     let qrDetector = null;
     let streaming = false;
@@ -246,16 +269,18 @@
     let torchOn = false;
     let focusSupported = false;
 
-    // === Base64 button ===
+    // === Base64 button: use CENTER 36% canvas ===
     base64Btn.addEventListener('click', () => {
-      const canvas = qrFullCanvas;
+      const canvas = qrCenterCanvas; // center 36% cleaned crop
+
       if (!canvas.width || !canvas.height) {
-        alert('No cleaned crop available yet.');
+        alert('No center crop available yet.');
         return;
       }
+
       const base64 = canvas.toDataURL('image/png');
-      navigator.clipboard?.writeText(base64).catch(() => {});
-      alert('Base64 copied to clipboard.\n\n' + base64.substring(0, 200) + '...');
+      base64Output.value = base64; // show on page so you can copy by hand
+      base64Output.scrollTop = 0;
     });
 
     // === Camera ===
@@ -366,7 +391,6 @@
           // (B) full clean
           let qrClean = siameseClean(qrCrop);
           cv.imshow('qrFull', qrClean);
-          base64Btn.disabled = false;
 
           // (C) center 36% crop
           let h = qrCrop.rows;
@@ -397,14 +421,20 @@
             let centerClean = siameseClean(centerCrop);
             cv.imshow('qrCenter', centerClean);
 
+            // enable Base64 button only when center crop is valid
+            base64Btn.disabled = false;
+
             centerClean.delete();
             centerCrop.delete();
+          } else {
+            base64Btn.disabled = true;
           }
 
           qrClean.delete();
           qrCrop.delete();
         } else {
           statusSpan.textContent = "QR detected but crop size invalid.";
+          base64Btn.disabled = true;
         }
 
         // (E) straight QR
@@ -430,7 +460,7 @@
       } else {
         console.log("No QR code detected.");
         statusSpan.textContent = "No QR detected. Try again / move closer.";
-        alert("No QR code detected. Try again with better framing / lighting.");
+        base64Btn.disabled = true;
       }
 
       points.delete();
@@ -560,9 +590,8 @@
     }
   </script>
 
-  <!-- OpenCV.js with proper runtime hook -->
+  <!-- OpenCV.js with runtime hook -->
   <script>
-    // OpenCV uses this global Module object
     var Module = {
       onRuntimeInitialized() {
         onOpenCvReady();
