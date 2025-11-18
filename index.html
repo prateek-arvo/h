@@ -381,7 +381,7 @@
       let cleaned = new cv.Mat();
 
       // Very light blur (3x3, sigma=0.3)
-     cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
+      cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
 
       // Slight contrast normalization [0,255]
       cv.normalize(blurred, cleaned, 0, 255, cv.NORM_MINMAX);
@@ -390,7 +390,7 @@
       return cleaned;
     }
 
-    // Common QR detection + crop + clean pipeline (matches your Python logic)
+    // Common QR detection + crop + clean pipeline
     function processMat(src) {
       if (!qrDetector) {
         qrDetector = new cv.QRCodeDetector();
@@ -413,7 +413,7 @@
         let yMin = parseInt(Math.min(...ys));
         let yMax = parseInt(Math.max(...ys));
 
-        // ----- padding = 4 pixels (like your Python) -----
+        // padding = 4 pixels (like Python)
         const pad = 4;
         xMin = Math.max(0, xMin - pad);
         yMin = Math.max(0, yMin - pad);
@@ -424,15 +424,15 @@
         let height = yMax - yMin;
 
         if (width > 0 && height > 0) {
-          // ---------- (A) RAW QR CROP (padded bounding box) ----------
+          // (A) RAW QR CROP (padded bounding box)
           let rect = new cv.Rect(xMin, yMin, width, height);
           let qrCrop = src.roi(rect);
 
-          // ---------- (B) SIAMESE-FRIENDLY CLEAN FULL CROP ----------
+          // (B) SIAMESE-FRIENDLY CLEAN FULL CROP
           let qrClean = siameseClean(qrCrop);
           cv.imshow('qrFull', qrClean);
 
-          // ---------- (C) CENTER 36% CROP ----------
+          // (C) CENTER 36% CROP
           let h = qrCrop.rows;
           let w = qrCrop.cols;
           let cropW = Math.floor(w * 0.36);
@@ -458,7 +458,7 @@
             let centerRect = new cv.Rect(x1, y1, centerW, centerH);
             let centerCrop = qrCrop.roi(centerRect);
 
-            // ---------- (D) LIGHT CLEAN CENTER CROP ----------
+            // (D) LIGHT CLEAN CENTER CROP
             let centerClean = siameseClean(centerCrop);
             cv.imshow('qrCenter', centerClean);
 
@@ -472,7 +472,7 @@
           statusSpan.textContent = "QR detected but crop size invalid.";
         }
 
-        // ---------- (E) OPTIONAL: STRAIGHT GEOMETRY ----------
+        // (E) OPTIONAL: STRAIGHT GEOMETRY
         if (!straight.empty()) {
           let straightMat = straight.clone();
 
@@ -517,14 +517,13 @@
 
       ctx.drawImage(video, 0, 0, w, h);
 
-     let src = cv.imread(hiddenCanvas);
-     let bgr = new cv.Mat();
-     cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
-     src.delete();
-     src = bgr;
-
-      processMat(src);
+      let src = cv.imread(hiddenCanvas);
+      let bgr = new cv.Mat();
+      cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
       src.delete();
+
+      processMat(bgr);
+      bgr.delete();
     }
 
     // Handle photo upload / native camera capture
@@ -548,8 +547,12 @@
         ctx.drawImage(img, 0, 0);
 
         let src = cv.imread(hiddenCanvas);
-        processMat(src);
+        let bgr = new cv.Mat();
+        cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
         src.delete();
+
+        processMat(bgr);
+        bgr.delete();
 
         URL.revokeObjectURL(url);
         photoInput.value = "";
@@ -565,4 +568,3 @@
   </script>
 </body>
 </html>
-
