@@ -381,7 +381,7 @@
       let cleaned = new cv.Mat();
 
       // Very light blur (3x3, sigma=0.3)
-      cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_DEFAULT);
+     cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
 
       // Slight contrast normalization [0,255]
       cv.normalize(blurred, cleaned, 0, 255, cv.NORM_MINMAX);
@@ -408,10 +408,10 @@
         let xs = [data[0], data[2], data[4], data[6]];
         let ys = [data[1], data[3], data[5], data[7]];
 
-        let xMin = Math.floor(Math.min.apply(null, xs));
-        let xMax = Math.ceil(Math.max.apply(null, xs));
-        let yMin = Math.floor(Math.min.apply(null, ys));
-        let yMax = Math.ceil(Math.max.apply(null, ys));
+        let xMin = parseInt(Math.min(...xs));
+        let xMax = parseInt(Math.max(...xs));
+        let yMin = parseInt(Math.min(...ys));
+        let yMax = parseInt(Math.max(...ys));
 
         // ----- padding = 4 pixels (like your Python) -----
         const pad = 4;
@@ -517,7 +517,12 @@
 
       ctx.drawImage(video, 0, 0, w, h);
 
-      let src = cv.imread(hiddenCanvas);  // CV_8UC4
+     let src = cv.imread(hiddenCanvas);
+     let bgr = new cv.Mat();
+     cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
+     src.delete();
+     src = bgr;
+
       processMat(src);
       src.delete();
     }
@@ -560,3 +565,4 @@
   </script>
 </body>
 </html>
+
