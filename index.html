@@ -116,7 +116,6 @@
       transform: none;
     }
 
-    /* NEW button styling */
     #base64Btn {
       background: #9c27b0;
       color: #fff;
@@ -169,37 +168,43 @@
     }
   </style>
 </head>
-
 <body>
   <div class="container">
     <h2>QR Capture & Crop</h2>
     <p>Choose: live camera or take a photo, then process the QR.</p>
 
+    <!-- Live camera -->
     <video id="video" autoplay playsinline></video>
 
+    <!-- Controls -->
     <div id="controls">
       <div class="button-row">
         <button id="captureBtn" disabled>Capture (Live)</button>
         <button id="flashBtn" disabled>Flash</button>
       </div>
-
       <div class="button-row">
         <button id="photoBtn">Use Photo / Take Photo</button>
       </div>
-
-      <!-- NEW BUTTON -->
       <div class="button-row">
         <button id="base64Btn" disabled>Get Base64 (Full Clean Crop)</button>
       </div>
-
       <span id="status">Loading OpenCV…</span>
       <div id="tapHint">Tip: tap the video to refocus (if supported).</div>
     </div>
 
+    <!-- Hidden canvas -->
     <canvas id="hiddenCanvas" style="display:none;"></canvas>
 
-    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none;" />
+    <!-- Hidden file input -->
+    <input
+      type="file"
+      id="photoInput"
+      accept="image/*"
+      capture="environment"
+      style="display:none;"
+    />
 
+    <!-- Output canvases -->
     <div id="output">
       <div class="panel">
         <div class="panel-title">Full QR Crop (Siamese-clean)</div>
@@ -216,22 +221,21 @@
     </div>
   </div>
 
-  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
-
+  <!-- Your main JS -->
   <script>
-    let video = document.getElementById("video");
-    let hiddenCanvas = document.getElementById("hiddenCanvas");
+    let video = document.getElementById('video');
+    let hiddenCanvas = document.getElementById('hiddenCanvas');
 
-    let qrFullCanvas = document.getElementById("qrFull");
-    let qrCenterCanvas = document.getElementById("qrCenter");
-    let qrStraightCanvas = document.getElementById("qrStraight");
+    let qrFullCanvas = document.getElementById('qrFull');
+    let qrCenterCanvas = document.getElementById('qrCenter');
+    let qrStraightCanvas = document.getElementById('qrStraight');
 
-    let captureBtn = document.getElementById("captureBtn");
-    let flashBtn = document.getElementById("flashBtn");
-    let photoBtn = document.getElementById("photoBtn");
-    let base64Btn = document.getElementById("base64Btn");   // NEW
-    let photoInput = document.getElementById("photoInput");
-    let statusSpan = document.getElementById("status");
+    let captureBtn = document.getElementById('captureBtn');
+    let flashBtn = document.getElementById('flashBtn');
+    let photoBtn = document.getElementById('photoBtn');
+    let base64Btn = document.getElementById('base64Btn');
+    let photoInput = document.getElementById('photoInput');
+    let statusSpan = document.getElementById('status');
 
     let qrDetector = null;
     let streaming = false;
@@ -242,28 +246,23 @@
     let torchOn = false;
     let focusSupported = false;
 
-    // NEW: generate Base64 from qrFull canvas
-    base64Btn.addEventListener("click", () => {
-      let canvas = qrFullCanvas;
-
+    // === Base64 button ===
+    base64Btn.addEventListener('click', () => {
+      const canvas = qrFullCanvas;
       if (!canvas.width || !canvas.height) {
-        alert("No cleaned crop available yet.");
+        alert('No cleaned crop available yet.');
         return;
       }
-
-      let base64 = canvas.toDataURL("image/png");
-
-      // Copy to clipboard
-      navigator.clipboard.writeText(base64).catch(() => {});
-
-      alert("Base64 copied to clipboard:\n\n" + base64.substring(0, 200) + "...");
+      const base64 = canvas.toDataURL('image/png');
+      navigator.clipboard?.writeText(base64).catch(() => {});
+      alert('Base64 copied to clipboard.\n\n' + base64.substring(0, 200) + '...');
     });
 
-    // Camera startup
+    // === Camera ===
     function startCamera() {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        console.warn("Camera not supported.");
-        statusSpan.textContent = "Camera not supported.";
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.warn("Camera not supported. Live mode disabled, photo mode still works.");
+        statusSpan.textContent = "Camera not supported (use Photo mode).";
         captureBtn.disabled = true;
         flashBtn.disabled = true;
         return;
@@ -272,66 +271,76 @@
       const constraints = {
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1920, max: 2560 },
+          width:  { ideal: 1920, max: 2560 },
           height: { ideal: 1080, max: 1440 }
-        }
+        },
+        audio: false
       };
 
-      navigator.mediaDevices.getUserMedia(constraints).then(stream => {
-        videoTrack = stream.getVideoTracks[0];
-        video.srcObject = stream;
-        video.play();
-      });
+      navigator.mediaDevices.getUserMedia(constraints)
+        .then(stream => {
+          videoTrack = stream.getVideoTracks()[0];
+
+          const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          console.log('Video capabilities:', caps);
+
+          if ('torch' in caps) {
+            torchAvailable = true;
+            flashBtn.disabled = false;
+            flashBtn.textContent = "Flash Off";
+          } else {
+            torchAvailable = false;
+            flashBtn.disabled = true;
+            flashBtn.textContent = "Flash N/A";
+          }
+
+          if (caps.focusMode && caps.focusMode.length > 0) {
+            focusSupported = true;
+          }
+
+          const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
+          console.log("Camera settings:", settings);
+          statusSpan.textContent = `Camera started: ${settings.width || ''}×${settings.height || ''}`.trim();
+
+          video.srcObject = stream;
+          video.play();
+        })
+        .catch(err => {
+          console.error("Error accessing camera: ", err);
+          alert("Could not access camera: " + err.message);
+          statusSpan.textContent = "Camera error. You can still use Photo mode.";
+          captureBtn.disabled = true;
+          flashBtn.disabled = true;
+        });
     }
 
-    function onOpenCvReady() {
-      opencvReady = true;
-      startCamera();
-
-      video.addEventListener("playing", () => {
-        if (streaming) return;
-        streaming = true;
-
-        hiddenCanvas.width = video.videoWidth;
-        hiddenCanvas.height = video.videoHeight;
-
-        qrDetector = new cv.QRCodeDetector();
-        captureBtn.disabled = false;
-      });
-
-      captureBtn.addEventListener("click", captureFromVideo);
-      flashBtn.addEventListener("click", toggleFlash);
-      photoBtn.addEventListener("click", () => photoInput.click());
-      photoInput.addEventListener("change", handlePhotoSelection);
-    }
-
-    // Torch toggle (unchanged)
-    function toggleFlash() {}
-
-    // Siamese-clean function
+    // === Siamese-style cleaning ===
     function siameseClean(mat) {
       let blurred = new cv.Mat();
       let cleaned = new cv.Mat();
 
-      cv.GaussianBlur(mat, blurred, new cv.Size(3,3), 0.3, 0.3, cv.BORDER_REFLECT_101);
+      cv.GaussianBlur(mat, blurred, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_REFLECT_101);
       cv.normalize(blurred, cleaned, 0, 255, cv.NORM_MINMAX);
 
       blurred.delete();
       return cleaned;
     }
 
-    // Main processing logic (unchanged except for enabling button)
+    // === Core QR processing ===
     function processMat(src) {
-      if (!qrDetector) qrDetector = new cv.QRCodeDetector();
+      if (!qrDetector) {
+        qrDetector = new cv.QRCodeDetector();
+      }
 
       let points = new cv.Mat();
       let straight = new cv.Mat();
-
       let decoded = qrDetector.detectAndDecode(src, points, straight);
 
       if (decoded && decoded.length > 0 && !points.empty()) {
-        let data = points.data32F;
+        console.log('QR data:', decoded);
+        statusSpan.textContent = "QR detected: " + decoded;
 
+        let data = points.data32F;
         let xs = [data[0], data[2], data[4], data[6]];
         let ys = [data[1], data[3], data[5], data[7]];
 
@@ -346,34 +355,99 @@
         xMax = Math.min(src.cols, xMax + pad);
         yMax = Math.min(src.rows, yMax + pad);
 
-        let w = xMax - xMin;
-        let h = yMax - yMin;
+        let width = xMax - xMin;
+        let height = yMax - yMin;
 
-        if (w > 0 && h > 0) {
-          let rect = new cv.Rect(xMin, yMin, w, h);
+        if (width > 0 && height > 0) {
+          // (A) QR crop
+          let rect = new cv.Rect(xMin, yMin, width, height);
           let qrCrop = src.roi(rect);
 
+          // (B) full clean
           let qrClean = siameseClean(qrCrop);
-          cv.imshow("qrFull", qrClean);
-
-          // Enable new button
+          cv.imshow('qrFull', qrClean);
           base64Btn.disabled = false;
+
+          // (C) center 36% crop
+          let h = qrCrop.rows;
+          let w = qrCrop.cols;
+          let cropW = Math.floor(w * 0.36);
+          let cropH = Math.floor(h * 0.36);
+
+          let cx = Math.floor(w / 2);
+          let cy = Math.floor(h / 2);
+
+          let x1 = cx - Math.floor(cropW / 2);
+          let y1 = cy - Math.floor(cropH / 2);
+          let x2 = x1 + cropW;
+          let y2 = y1 + cropH;
+
+          x1 = Math.max(0, x1);
+          y1 = Math.max(0, y1);
+          x2 = Math.min(w, x2);
+          y2 = Math.min(h, y2);
+
+          let centerW = x2 - x1;
+          let centerH = y2 - y1;
+
+          if (centerW > 0 && centerH > 0) {
+            let centerRect = new cv.Rect(x1, y1, centerW, centerH);
+            let centerCrop = qrCrop.roi(centerRect);
+
+            let centerClean = siameseClean(centerCrop);
+            cv.imshow('qrCenter', centerClean);
+
+            centerClean.delete();
+            centerCrop.delete();
+          }
 
           qrClean.delete();
           qrCrop.delete();
+        } else {
+          statusSpan.textContent = "QR detected but crop size invalid.";
         }
+
+        // (E) straight QR
+        if (!straight.empty()) {
+          let straightMat = straight.clone();
+
+          if (straightMat.channels() === 1) {
+            let rgb = new cv.Mat();
+            cv.cvtColor(straightMat, rgb, cv.COLOR_GRAY2BGR);
+            straightMat.delete();
+            straightMat = rgb;
+          }
+
+          let straightClean = siameseClean(straightMat);
+          cv.imshow('qrStraight', straightClean);
+
+          straightClean.delete();
+          straightMat.delete();
+        } else {
+          let ctx = qrStraightCanvas.getContext('2d');
+          ctx.clearRect(0, 0, qrStraightCanvas.width, qrStraightCanvas.height);
+        }
+      } else {
+        console.log("No QR code detected.");
+        statusSpan.textContent = "No QR detected. Try again / move closer.";
+        alert("No QR code detected. Try again with better framing / lighting.");
       }
 
       points.delete();
       straight.delete();
     }
 
-    // Capture live
+    // === Capture from live video ===
     function captureFromVideo() {
+      if (!opencvReady || !streaming) {
+        alert("Live camera not ready yet.");
+        return;
+      }
+
       const w = hiddenCanvas.width;
       const h = hiddenCanvas.height;
+      const ctx = hiddenCanvas.getContext('2d');
 
-      let ctx = hiddenCanvas.getContext("2d");
       ctx.drawImage(video, 0, 0, w, h);
 
       let src = cv.imread(hiddenCanvas);
@@ -385,19 +459,23 @@
       bgr.delete();
     }
 
-    // Capture photo file
-    function handlePhotoSelection(e) {
-      const file = e.target.files[0];
+    // === Handle photo selection ===
+    function handlePhotoSelection(event) {
+      const file = event.target.files && event.target.files[0];
       if (!file) return;
+      if (!opencvReady) {
+        alert("OpenCV not ready.");
+        return;
+      }
 
-      let img = new Image();
-      let url = URL.createObjectURL(file);
+      const img = new Image();
+      const url = URL.createObjectURL(file);
 
       img.onload = () => {
         hiddenCanvas.width = img.width;
         hiddenCanvas.height = img.height;
 
-        let ctx = hiddenCanvas.getContext("2d");
+        const ctx = hiddenCanvas.getContext('2d');
         ctx.drawImage(img, 0, 0);
 
         let src = cv.imread(hiddenCanvas);
@@ -412,8 +490,85 @@
         photoInput.value = "";
       };
 
+      img.onerror = () => {
+        alert("Failed to load image.");
+        URL.revokeObjectURL(url);
+      };
+
       img.src = url;
     }
+
+    // === Called once OpenCV runtime is ready ===
+    function onOpenCvReady() {
+      console.log('OpenCV.js runtime ready');
+      opencvReady = true;
+      statusSpan.textContent = "OpenCV ready. Starting live camera…";
+
+      startCamera();
+
+      video.addEventListener('playing', () => {
+        if (streaming) return;
+        streaming = true;
+
+        if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+        hiddenCanvas.width = video.videoWidth;
+        hiddenCanvas.height = video.videoHeight;
+
+        console.log("Video element size:", video.videoWidth, "x", video.videoHeight);
+
+        qrDetector = new cv.QRCodeDetector();
+        captureBtn.disabled = false;
+        statusSpan.textContent = `Live mode ready (${video.videoWidth}×${video.videoHeight}). Or use Photo mode.`;
+      });
+
+      // buttons
+      captureBtn.addEventListener('click', captureFromVideo);
+      flashBtn.addEventListener('click', () => {
+        if (!videoTrack || !videoTrack.applyConstraints || !torchAvailable) {
+          alert("Flash/torch not supported on this device or browser.");
+          return;
+        }
+        torchOn = !torchOn;
+        videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] })
+          .then(() => {
+            flashBtn.classList.toggle('enabled', torchOn);
+            flashBtn.textContent = torchOn ? "Flash On" : "Flash Off";
+          })
+          .catch(err => {
+            console.error("Error toggling torch:", err);
+            alert("Could not toggle flash: " + err.message);
+          });
+      });
+
+      video.addEventListener('click', () => {
+        if (!videoTrack || !videoTrack.applyConstraints || !focusSupported) return;
+        videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] })
+          .then(() => console.log("Requested re-focus (continuous)."))
+          .catch(err => console.warn("Focus constraint error:", err));
+      });
+
+      photoBtn.addEventListener('click', () => {
+        if (!opencvReady) {
+          alert("OpenCV not ready yet.");
+          return;
+        }
+        photoInput.click();
+      });
+
+      photoInput.addEventListener('change', handlePhotoSelection);
+    }
   </script>
+
+  <!-- OpenCV.js with proper runtime hook -->
+  <script>
+    // OpenCV uses this global Module object
+    var Module = {
+      onRuntimeInitialized() {
+        onOpenCvReady();
+      }
+    };
+  </script>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </body>
 </html>
