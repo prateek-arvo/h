@@ -126,6 +126,16 @@
       cursor: default;
     }
 
+    #copyBase64Btn {
+      background: #607d8b;
+      color: #fff;
+    }
+
+    #copyBase64Btn:disabled {
+      background: #555;
+      cursor: default;
+    }
+
     #status {
       font-size: 0.8rem;
       text-align: center;
@@ -201,8 +211,8 @@
         <button id="photoBtn">Use Photo / Take Photo</button>
       </div>
       <div class="button-row">
-        <!-- Now clearly labeled as center 36% -->
         <button id="base64Btn" disabled>Get Base64 (Center 36% Clean)</button>
+        <button id="copyBase64Btn" disabled>Copy Base64</button>
       </div>
       <span id="status">Loading OpenCV…</span>
       <div id="tapHint">Tip: tap the video to refocus (if supported).</div>
@@ -256,6 +266,7 @@
     let flashBtn = document.getElementById('flashBtn');
     let photoBtn = document.getElementById('photoBtn');
     let base64Btn = document.getElementById('base64Btn');
+    let copyBase64Btn = document.getElementById('copyBase64Btn');
     let photoInput = document.getElementById('photoInput');
     let statusSpan = document.getElementById('status');
     let base64Output = document.getElementById('base64Output');
@@ -279,8 +290,32 @@
       }
 
       const base64 = canvas.toDataURL('image/png');
-      base64Output.value = base64; // show on page so you can copy by hand
+      base64Output.value = base64; // show on page
       base64Output.scrollTop = 0;
+      copyBase64Btn.disabled = !base64; // enable copy if we have something
+    });
+
+    // === Copy Base64 button ===
+    copyBase64Btn.addEventListener('click', () => {
+      const text = base64Output.value;
+      if (!text.trim()) {
+        alert('No Base64 string to copy.');
+        return;
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(() => {
+            // optional feedback
+            // alert('Base64 copied to clipboard.');
+          })
+          .catch(err => {
+            console.error('Clipboard error:', err);
+            alert('Could not copy to clipboard. You can still copy manually.');
+          });
+      } else {
+        alert('Clipboard API not supported. Please copy manually.');
+      }
     });
 
     // === Camera ===
@@ -421,13 +456,15 @@
             let centerClean = siameseClean(centerCrop);
             cv.imshow('qrCenter', centerClean);
 
-            // enable Base64 button only when center crop is valid
+            // enable Base64 + copy buttons
             base64Btn.disabled = false;
+            copyBase64Btn.disabled = !base64Output.value.trim();
 
             centerClean.delete();
             centerCrop.delete();
           } else {
             base64Btn.disabled = true;
+            copyBase64Btn.disabled = true;
           }
 
           qrClean.delete();
@@ -435,6 +472,7 @@
         } else {
           statusSpan.textContent = "QR detected but crop size invalid.";
           base64Btn.disabled = true;
+          copyBase64Btn.disabled = true;
         }
 
         // (E) straight QR
@@ -461,6 +499,7 @@
         console.log("No QR code detected.");
         statusSpan.textContent = "No QR detected. Try again / move closer.";
         base64Btn.disabled = true;
+        copyBase64Btn.disabled = true;
       }
 
       points.delete();
