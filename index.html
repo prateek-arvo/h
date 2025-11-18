@@ -402,7 +402,7 @@ function siameseClean(mat) {
 
   // Very light blur (3x3, sigma=0.3, REFLECT_101)
   let blurred = new cv.Mat();
-  cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0.7, 0.7, cv.BORDER_REFLECT_101);
+  cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 1.2, 1.2, cv.BORDER_REFLECT_101);
 
   // Normalize in float then bring back to 8U
   let blurred32 = new cv.Mat();
@@ -684,6 +684,7 @@ function siameseClean(mat) {
   <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </body>
 </html>
+
 
 
 
